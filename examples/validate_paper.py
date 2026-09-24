@@ -27,8 +27,9 @@ PAPER = {
     "iND750": {"simple": "ACOAH (forward)", "synthase": "ACOAH (forward)"},
     "iJN746": {"simple": "ACALD (forward)", "synthase": "ALDD2x_copy2 (backward)"},
     "iJO1366+6": {"simple": "MOX (backward) o SPODM (forward), según el texto", "synthase": "-"},
+    "iRC1080": {"simple": "49 cambios (ver tabla S2)", "synthase": "49 cambios (ver tabla S2)"},
 }
-ATP_SYNTHASES = ["ATPS4rpp", "ATPS4r", "ATPS3m", "ATPS3v"]
+ATP_SYNTHASES = ["ATPS4rpp", "ATPS4r", "ATPS3m", "ATPS3v", "ATPS", "ATPSh"]
 IJO_EGC = ["SPODM", "SPODMpp", "SUCASPtpp", "SUCFUMtpp", "SUCMALtpp", "SUCTARTtpp"]
 
 
@@ -41,7 +42,12 @@ def load(name):
         for rid in IJO_EGC:
             model.reactions.get_by_id(rid).bounds = (-1000, 1000)
         return model
-    return load_bigg_model(name, MODELS_DIR)
+    model = load_bigg_model(name, MODELS_DIR)
+    if name == "iRC1080":
+        # El SBML no trae objetivo; el paper no dice cuál usó (las tres
+        # biomasas dan correcciones de 49 cambios).
+        model.objective = "BIOMASS_Chlamy_hetero"
+    return model
 
 
 for name, expected in PAPER.items():
@@ -61,7 +67,8 @@ for name, expected in PAPER.items():
     for run, protected in [("simple", []), ("synthase", synthases)]:
         start = time.time()
         results = globalfit(model, energy_rxns=edrs, rich_medium=True,
-                            min_growth=MIN_GROWTH, protected=protected, n_solutions=5)
+                            min_growth=MIN_GROWTH, protected=protected,
+                            n_solutions=1 if name == "iRC1080" else 5)
         elapsed = time.time() - start
         print(f"\n  [{run}] {elapsed:.1f} s — paper: {expected[run]}")
         for result in results:
@@ -71,4 +78,4 @@ for name, expected in PAPER.items():
             energy, growth = verify(model, result.removals, edrs, rich_medium=True)
             ok = "OK" if all(v == 0 for v in energy.values()) else f"FALLA {energy}"
             removals = ", ".join(map(str, result.removals))
-            print(f"    {result.objective} cambio(s): {removals}  | verif {ok}, crecimiento {growth:.3f}")
+            print(f"    {len(result.removals)} cambio(s): {removals}  | verif {ok}, crecimiento {growth:.3f}")

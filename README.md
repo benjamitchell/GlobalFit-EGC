@@ -1,43 +1,70 @@
 # GlobalFit-EGC
 
-Implementación en Python de **GlobalFit** para detectar y eliminar **ciclos
-generadores de energía** (EGCs) en modelos metabólicos a escala genómica,
-siguiendo a [Fritzemeier et al. (2017)](https://doi.org/10.1371/journal.pcbi.1005494).
-Usa COBRApy y el solver libre HiGHS: no requiere licencias.
+A Python implementation of **GlobalFit** for detecting and removing
+**energy-generating cycles** (EGCs) in genome-scale metabolic models, following
+[Fritzemeier et al. (2017)](https://doi.org/10.1371/journal.pcbi.1005494).
+Built on COBRApy and the open-source HiGHS solver, so no commercial license is
+needed.
 
-## El problema
+## The problem
 
-Un EGC es un conjunto de reacciones que, en un modelo metabólico, carga ATP (u
-otro metabolito energético) **sin consumir nutrientes**. Es termodinámicamente
-imposible, pero FBA no considera termodinámica: usa esa energía gratis y el
-crecimiento predicho se infla. Fritzemeier et al. encontraron EGCs en el 68 % de
-350 modelos publicados, y en más del 85 % de los generados automáticamente.
+An EGC is a set of reactions that lets a metabolic model charge ATP (or another
+energy metabolite) **without taking up any nutrients**. That is
+thermodynamically impossible, but flux balance analysis (FBA) ignores
+thermodynamics: it uses the free energy, and predicted growth gets inflated.
+Fritzemeier et al. found EGCs in 68% of 350 published models, and in over 85%
+of the automatically generated ones.
 
-![Crecimiento de iJO1366 curado, con EGCs y corregido](docs/crecimiento_iJO1366.png)
+![Growth of iJO1366: curated, with EGCs, and corrected](docs/crecimiento_iJO1366.png)
 
-En *E. coli* iJO1366, reactivar las seis reacciones que sus autores bloquearon
-crea EGCs que inflan el crecimiento en un 41 %. GlobalFit-EGC encuentra la
-corrección mínima (un solo cambio) y devuelve el crecimiento a su valor real.
+In *E. coli* iJO1366, re-enabling the six reactions its authors blocked creates
+EGCs that inflate growth by 41%. GlobalFit-EGC finds the minimal fix (a single
+change) and brings growth back to its real value.
 
-## Validación contra el paper
+## Validation against the paper
 
-La tabla S2 del paper lista qué detectó y qué eliminó GlobalFit en cada modelo.
-Resultados de esta implementación sobre modelos descargados hoy de BiGG:
+Table S2 of the paper lists what GlobalFit detected and removed in each model.
+Results of this implementation on models downloaded from BiGG today:
 
-| Modelo | EGCs detectados (normalizado) | Eliminación del paper | GlobalFit-EGC |
+| Model | EGCs detected (normalized) | Paper's removal | GlobalFit-EGC |
 |---|---|---|---|
-| iND750 (*S. cerevisiae*) | ACCOA 1 — **igual** | `ACOAH` forward | `ACOAH` forward |
-| iJN746 (*P. putida*) | ATP 1, CTP 1, GTP 1, UTP 1, ACCOA 1, PROTON 4 — **igual** | `ACALD` forward | `ACALD` forward o `ALDD2x_copy2` backward |
-| iJN746, sin tocar la ATP sintasa | | `ALDD2x_copy2` backward | `ALDD2x_copy2` backward o `ACALD` forward |
-| iJO1366 + 6 reacciones | ATP, CTP, GTP, UTP, ITP, ACCOA, PROTON | `MOX` backward o `SPODM` forward (Fig. 6C) | `MOX` backward, `SPODM` forward o `MDH` forward |
+| iND750 (*S. cerevisiae*) | ACCOA 1 — **same** | `ACOAH` forward | `ACOAH` forward |
+| iJN746 (*P. putida*) | ATP 1, CTP 1, GTP 1, UTP 1, ACCOA 1, PROTON 4 — **same** | `ACALD` forward | `ACALD` forward or `ALDD2x_copy2` backward |
+| iJN746, ATP synthase kept | | `ALDD2x_copy2` backward | `ALDD2x_copy2` backward or `ACALD` forward |
+| iJO1366 + 6 reactions | ATP, CTP, GTP, UTP, ITP, ACCOA, PROTON | `MOX` backward or `SPODM` forward (Fig. 6C) | `MOX` backward, `SPODM` forward or `MDH` forward |
+| iRC1080 (*C. reinhardtii*) | GTP 1, UTP 1, ITP 1, ACCOA 2.25 — **same** | 49 changes | 49 changes, 41 shared with the paper |
 
-Cada solución se verifica con un FBA independiente: el modelo corregido no
-genera energía sin nutrientes y sigue creciendo. Las corridas toman entre 0,4 y
-40 segundos en un portátil; el paper usaba CPLEX en un servidor de 8 núcleos.
+Every solution is checked with an independent FBA: the corrected model generates
+no energy without nutrients and can still grow. Runs take from under a second
+to a few minutes on a laptop (iRC1080 is the slowest); the paper used CPLEX on
+an 8-core server.
 
-Para reproducirlo: `python examples/validate_paper.py`.
+In iRC1080 the optimal fix has the same size as the paper's (49 changes), and
+the differences are equal-cost alternatives, mostly other acyltransferases from
+the same lipid family. Applied to today's BiGG version, the paper's own set
+leaves one ITP cycle open, because one of its reactions (`ITPA`) no longer
+exists in the model.
 
-## Instalación
+To reproduce: `python examples/validate_paper.py`.
+
+## Automatically generated models
+
+The paper's central finding is that automatic reconstructions are riddled with
+EGCs. Models of the same two organisms built with different tools (from the
+[merlin v4 benchmark](https://github.com/BioSystemsUM/merlinv4_paper)):
+
+| | *L. plantarum* | *B. pertussis* |
+|---|---|---|
+| **ModelSEED** (automatic) | EGCs for 6 energy metabolites | EGCs for 12 |
+| **CarveMe** (automatic) | none | EGCs for all 15 |
+| **Manually curated** | none | none |
+
+GlobalFit-EGC removes all of them in seconds. In *B. pertussis* (ModelSEED) it
+finds the exact cycle of the paper's Fig. 6D: `rxn00379` makes APS from ATP and
+sulfate, and `rxn09240` runs the reverse reaction while also charging a GTP.
+Removing either one breaks it. The notebook walks through these cases.
+
+## Installation
 
 ```bash
 git clone https://github.com/benjamitchell/GlobalFit-EGC.git
@@ -46,9 +73,9 @@ pip install -e ".[dev,demo]"
 pytest
 ```
 
-Requiere Python ≥ 3.10.
+Requires Python ≥ 3.10.
 
-## Uso
+## Usage
 
 ```python
 from globalfit import (
@@ -56,155 +83,164 @@ from globalfit import (
     globalfit, load_bigg_model, verify,
 )
 
-model = load_bigg_model("iJO1366")               # descarga de BiGG a ./modelos
-edrs = add_energy_dissipation_reactions(model)   # las 15 EDR de la tabla S1
+model = load_bigg_model("iJO1366")               # downloads from BiGG to ./modelos
+edrs = add_energy_dissipation_reactions(model)   # the 15 EDRs of Table S1
 
-detect_egcs(model, edrs)                          # {"EDR_ATP": 0.0, ...}; > 0 = hay EGC
+detect_egcs(model, edrs)                          # {"EDR_ATP": 0.0, ...}; > 0 means an EGC
 
 results = globalfit(
     model,
     energy_rxns=edrs,
-    min_growth=0.1,                   # crecimiento mínimo tras corregir
-    weights=evidence_weights(model),  # opcional: desempata por evidencia
-    protected=["ATPS4rpp"],           # opcional: nunca eliminar estas
-    n_solutions=3,                    # enumera alternativas
+    min_growth=0.1,                   # minimal growth after the fix
+    weights=evidence_weights(model),  # optional: break ties by evidence
+    protected=["ATPS4rpp"],           # optional: never remove these
+    n_solutions=3,                    # enumerate alternatives
 )
 for r in results:
     print(r.objective, [str(x) for x in r.removals])
     energy, growth = verify(model, r.removals, edrs)
 ```
 
-El notebook [`notebooks/demo_globalfit.ipynb`](notebooks/demo_globalfit.ipynb)
-recorre el pipeline completo con resultados.
+For ModelSEED models, pass `MODELSEED_DISSIPATION_REACTIONS` to
+`add_energy_dissipation_reactions`. The notebook
+[`notebooks/demo_globalfit.ipynb`](notebooks/demo_globalfit.ipynb) runs the full
+pipeline with results (the notebook is in Spanish).
 
-## Cómo funciona
+## How it works
 
-### Detección
+### Detection
 
-A cada modelo se le agregan **reacciones de disipación de energía** (EDR) para
-15 metabolitos energéticos (ATP, CTP, GTP, UTP, ITP, NADH, NADPH, FADH₂, FMNH₂,
-ubiquinol-8, menaquinol-8, 2-demetilmenaquinol-8, acetil-CoA, glutamato y el
-gradiente de protones), por ejemplo `ATP + H₂O → ADP + Pi + H⁺`. Se bloquea la
-captación de nutrientes y se maximiza cada EDR: un flujo positivo indica un EGC.
-Las EDR de cofactores redox **no están balanceadas en carga a propósito**: si se
-incluyera el aceptor de electrones, la energía podría reciclarse dentro de la
-red y la EDR llevaría flujo aunque no hubiera EGCs.
+Each model gets an **energy dissipation reaction** (EDR) for 15 energy
+metabolites (ATP, CTP, GTP, UTP, ITP, NADH, NADPH, FADH₂, FMNH₂, ubiquinol-8,
+menaquinol-8, 2-demethylmenaquinol-8, acetyl-CoA, glutamate, and the proton
+gradient), e.g. `ATP + H₂O → ADP + Pi + H⁺`. Nutrient uptake is blocked and each
+EDR is maximized: any positive flux reveals an EGC. The EDRs for redox cofactors
+are **intentionally charge-unbalanced**: including the electron acceptor would
+let the energy be recycled inside the network, and the EDR could carry flux
+even without an EGC.
 
-### Corrección: el problema binivel
+### Correction: the bilevel problem
 
-GlobalFit busca el mínimo de **direcciones** de reacción a eliminar
-(binarias $\delta^F_j, \delta^B_j$) que cumplan dos condiciones a la vez:
+GlobalFit looks for the fewest reaction **directions** to remove (binaries
+$\delta^F_j, \delta^B_j$) such that two conditions hold at once:
 
 $$
 \begin{aligned}
 \min_{\delta}\quad & \textstyle\sum_j w^F_j\,\delta^F_j + w^B_j\,\delta^B_j \\
-\text{s.a.}\quad & S\,v = 0,\quad lb_j(1-\delta^B_j) \le v_j \le ub_j(1-\delta^F_j),\quad v_{\text{bio}} \ge T
-&& \text{(crecimiento)}\\
-& \max_{w}\Big\{\textstyle\sum_{d \in \text{EDR}} w_d \;:\; S\,w = 0,\; l_j(1-\delta^B_j) \le w_j \le u_j(1-\delta^F_j)\Big\} = 0
-&& \text{(sin nutrientes, sin EGCs)}
+\text{s.t.}\quad & S\,v = 0,\quad lb_j(1-\delta^B_j) \le v_j \le ub_j(1-\delta^F_j),\quad v_{\text{bio}} \ge T
+&& \text{(growth)}\\
+& \max_{w}\ \Big\lbrace \textstyle\sum_{d \in \text{EDR}} w_d \;:\; S\,w = 0,\; l_j(1-\delta^B_j) \le w_j \le u_j(1-\delta^F_j)\Big\rbrace = 0
+&& \text{(no nutrients, no EGCs)}
 \end{aligned}
 $$
 
-La segunda condición es un problema de optimización dentro de otro.
+The second condition is an optimization problem nested inside another one.
 
-### De binivel a un solo MILP, por dualidad
+### From bilevel to a single MILP, via duality
 
-El problema interno es un LP que siempre admite $w = 0$, así que su óptimo es
-$\ge 0$. Por dualidad de LP, el óptimo es $\le 0$ **si y solo si** existe un
-certificado dual $(\lambda, \alpha \ge 0, \beta \ge 0)$ con
+The inner problem is an LP that always admits $w = 0$, so its optimum is
+$\ge 0$. By LP duality, the optimum is $\le 0$ **if and only if** there is a
+dual certificate $(\lambda, \alpha \ge 0, \beta \ge 0)$ with
 
 $$
 S^\top \lambda + \alpha - \beta = c, \qquad
 \sum_j u_j(1-\delta^F_j)\,\alpha_j + |l_j|(1-\delta^B_j)\,\beta_j = 0,
 $$
 
-donde $c$ vale 1 en las EDR y 0 en el resto. Cada término de la suma es no
-negativo, así que la suma es cero solo si $\alpha_j = 0$ en toda dirección
-forward que sigue permitida (e igual para $\beta$). Eso se linealiza como
+where $c$ is 1 on the EDRs and 0 elsewhere. Every term of the sum is
+non-negative, so the sum is zero only if $\alpha_j = 0$ for every forward
+direction that is still allowed (likewise for $\beta$). That linearizes as
 
 $$
 \alpha_j \le M\,\delta^F_j, \qquad \beta_j \le M\,\delta^B_j .
 $$
 
-El resultado es un único MILP sin variables de flujo para el caso sin
-crecimiento, que HiGHS resuelve vía `scipy.optimize.milp`.
+The result is a single MILP with no flux variables for the no-growth case,
+solved by HiGHS through `scipy.optimize.milp`.
 
-**Interpretación.** $\lambda$ funciona como un potencial químico por
-metabolito: toda reacción que puede ir hacia adelante debe "bajar" potencial
-($S_j^\top\lambda \ge c_j$) y toda la que puede ir hacia atrás, "subirlo". Un EGC
-existe exactamente cuando no hay potenciales consistentes con todas las
-direcciones permitidas.
+**Interpretation.** $\lambda$ acts as a chemical potential for each metabolite:
+every reaction that may run forward must go "downhill"
+($S_j^\top\lambda \ge c_j$), and every reaction that may run backward, "uphill".
+An EGC exists exactly when no set of potentials is consistent with all allowed
+directions.
 
-**Robustez.** Cualquier solución factible es un certificado válido por
-dualidad débil. Un $M$ demasiado chico solo puede dar soluciones con más
-cambios de los necesarios, nunca un modelo que siga teniendo EGCs.
+**Robustness.** By weak duality, any feasible solution is a valid certificate.
+A Big-M that is too small can only yield fixes with more changes than
+necessary, never a model that still has EGCs.
 
-### Pesos y alternativas
+**Verification.** MILP solvers accept binaries within a tolerance, so a
+"removed" direction with $\delta = 1 - 10^{-6}$ can still carry
+$ub \cdot 10^{-6}$ of flux. With dozens of removals in a large model, that leak
+can fake growth (this happened on iRC1080). `globalfit` therefore rounds each
+candidate and re-checks it with exact LPs, growth and absence of EGCs, before
+returning it; spurious candidates are cut off and the MILP is solved again.
 
-- `weights` asigna un costo a cada dirección. `evidence_weights` implementa los
-  dos criterios que sugiere el paper: eliminar reacciones sin regla génica (GPR)
-  es más barato, y eliminar una reacción irreversible completa es más caro que
-  eliminar una dirección de una reversible. En iJO1366 esto rompe el empate a
-  favor de `MOX`, la única de las tres soluciones sin gen asociado.
-- `n_solutions` enumera alternativas con cortes *no-good*. Cada corte prohíbe
-  una solución y sus superconjuntos, así que las alternativas salen minimales y
-  en orden de costo.
+### Weights and alternatives
 
-## Diferencias con el paper
+- `weights` sets a cost for each direction. `evidence_weights` implements the
+  two criteria the paper suggests: removing reactions without a gene rule (GPR)
+  is cheaper, and removing an irreversible reaction entirely is more expensive
+  than removing one direction of a reversible one. In iJO1366 this breaks the
+  tie in favor of `MOX`, the only one of the three solutions with no gene.
+- `n_solutions` enumerates alternatives with *no-good* cuts. Each cut forbids a
+  solution and its supersets, so alternatives come out minimal and in order of
+  cost.
+
+## Differences from the paper
 
 | | Fritzemeier et al. (2017) | GlobalFit-EGC |
 |---|---|---|
-| Lenguaje / solver | R (sybil) + CPLEX | Python (COBRApy) + HiGHS |
-| Reformulación binivel | según Hartleb et al. (2016) | dualidad fuerte (ver arriba) |
-| Pesos | soportados; se usaron uniformes | uniformes por defecto; `evidence_weights` opcional |
-| Namespace de las EDR | BiGG, ModelSEED, MetaNetX | solo BiGG (se pueden pasar otras) |
+| Language / solver | R (sybil) + CPLEX | Python (COBRApy) + HiGHS |
+| Bilevel reformulation | following Hartleb et al. (2016) | strong duality (see above) |
+| Weights | supported; uniform weights used | uniform by default; optional `evidence_weights` |
+| EDR namespaces | BiGG, ModelSEED, MetaNetX | BiGG and ModelSEED (others can be passed) |
 
-## Limitaciones
+## Limitations
 
-- Las EDR predefinidas usan ids de BiGG. Para ModelSEED o MetaNetX hay que pasar
-  un diccionario propio a `add_energy_dissipation_reactions`.
-- Del paper se reprodujeron iND750, iJN746 e iJO1366. El tercer modelo de BiGG
-  con EGCs, iRC1080 (~50 cambios), no se ha probado.
-- `cobra.io.load_model` ya no descarga de BiGG (usa `http://` y el servidor
-  redirige a `https://`); por eso el paquete trae `load_bigg_model`.
+- Predefined EDRs exist for BiGG and ModelSEED ids. For MetaNetX or other
+  namespaces, pass your own dictionary to `add_energy_dissipation_reactions`.
+- The paper does not state which biomass reaction it used for iRC1080 (the
+  SBML has none set); all three give 49-change fixes.
+- `cobra.io.load_model` no longer downloads from BiGG (it uses `http://` and the
+  server redirects to `https://`), so the package ships `load_bigg_model`.
 
-## Estructura
+## Repository layout
 
 ```
-globalfit/            el paquete (core.py: detección, GlobalFit, pesos; io.py: BiGG)
-tests/                tests con el modelo core de E. coli y EGCs inyectados
-examples/             run_iJO1366.py y validate_paper.py
-notebooks/            demo_globalfit.ipynb
-  original_2025/      notebooks del proyecto del curso (versión original)
-informe/              informe del curso, paper y su material suplementario
-docs/                 figuras
+globalfit/            the package (core.py: detection, GlobalFit, weights; io.py: BiGG)
+tests/                tests on the E. coli core model with injected EGCs
+examples/             run_iJO1366.py and validate_paper.py
+notebooks/            demo_globalfit.ipynb (Spanish)
+  original_2025/      notebooks from the original course project
+informe/              course report (Spanish), the paper and its supplementary data
+docs/                 figures
 ```
 
-## Historia
+## History
 
-Este repositorio nace del proyecto del curso *Modelamiento y Análisis de Redes
-Biológicas* (MA5405, Universidad de Chile, junio 2025). La versión del curso,
-en [`notebooks/original_2025/`](notebooks/original_2025/), nunca llegó a una
-solución factible por dos motivos: para acelerar las pruebas se trabajó con 12
-de las ~2.580 reacciones de iJO1366 manteniendo el balance de masa estricto, lo
-que obliga a que la biomasa sea cero; y el problema interno se había planteado
-como $\min v_{ATP}$, que vale 0 siempre, en lugar de $\max$. Esta versión
-reescribe la implementación desde cero sobre el modelo completo.
+This repository grew out of a project for the course *Modelamiento y Análisis
+de Redes Biológicas* (MA5405, Universidad de Chile, June 2025). The course
+version, in [`notebooks/original_2025/`](notebooks/original_2025/), never
+reached a feasible solution, for two reasons: to speed up testing it used 12 of
+iJO1366's ~2,580 reactions while keeping strict mass balance, which forces
+biomass to zero; and the inner problem was written as $\min v_{ATP}$, which is
+always 0, instead of $\max$. This version is a from-scratch rewrite on the full
+model.
 
-## Autores
+## Authors
 
 - **Benjamín Mitchell García**
 - **Millaray Díaz Araujo**
 
-Proyecto del curso MA5405, con los profesores Vicente Acuña, Alejandro Maass y
+Course project for MA5405, taught by Vicente Acuña, Alejandro Maass and
 Sebastián Mendoza.
 
-## Licencia
+## License
 
-Código bajo licencia [MIT](LICENSE). El paper de Fritzemeier et al. y su
-material suplementario en `informe/` se distribuyen bajo CC BY 4.0.
+Code under the [MIT license](LICENSE). The Fritzemeier et al. paper and its
+supplementary data in `informe/` are distributed under CC BY 4.0.
 
-## Referencias
+## References
 
 - Fritzemeier CJ, Hartleb D, Szappanos B, Papp B, Lercher MJ (2017). *Erroneous
   energy-generating cycles in published genome scale metabolic networks:
@@ -214,3 +250,5 @@ material suplementario en `informe/` se distribuyen bajo CC BY 4.0.
   and Mycoplasma genitalium from GlobalFit, an Algorithm That Simultaneously
   Matches Growth and Non-Growth Data Sets.* PLoS Comput Biol 12(8): e1005036.
   https://doi.org/10.1371/journal.pcbi.1005036
+- Benchmark models used for the ModelSEED/CarveMe examples, from the merlin v4
+  paper repository (MIT license): https://github.com/BioSystemsUM/merlinv4_paper

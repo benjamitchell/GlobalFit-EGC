@@ -45,6 +45,7 @@ from scipy.optimize import Bounds, LinearConstraint, milp
 from scipy.sparse import csr_matrix, hstack, identity, vstack
 
 TOL = 1e-6
+MAX_REJECTED = 20  # candidatos del MILP que fallan la verificación antes de rendirse
 
 
 @dataclass
@@ -87,6 +88,28 @@ BIGG_DISSIPATION_REACTIONS: dict[str, dict[str, float]] = {
     "ACCOA": {"accoa_c": -1, "h2o_c": -1, "h_c": 1, "ac_c": 1, "coa_c": 1},
     "GLU": {"glu__L_c": -1, "h2o_c": -1, "akg_c": 1, "nh4_c": 1, "h_c": 2},
     "PROTON": {"h_p": -1, "h_c": 1},
+}
+
+
+# Las mismas 15 EDR con ids de ModelSEED (compartimentos c0/p0), verificados
+# contra ModelSEEDDatabase/Biochemistry/compounds.tsv. Los modelos de
+# ModelSEED suelen no tener periplasmo, así que PROTON casi nunca aplica.
+MODELSEED_DISSIPATION_REACTIONS: dict[str, dict[str, float]] = {
+    "ATP": {"cpd00002_c0": -1, "cpd00001_c0": -1, "cpd00008_c0": 1, "cpd00067_c0": 1, "cpd00009_c0": 1},
+    "CTP": {"cpd00052_c0": -1, "cpd00001_c0": -1, "cpd00096_c0": 1, "cpd00067_c0": 1, "cpd00009_c0": 1},
+    "GTP": {"cpd00038_c0": -1, "cpd00001_c0": -1, "cpd00031_c0": 1, "cpd00067_c0": 1, "cpd00009_c0": 1},
+    "UTP": {"cpd00062_c0": -1, "cpd00001_c0": -1, "cpd00014_c0": 1, "cpd00067_c0": 1, "cpd00009_c0": 1},
+    "ITP": {"cpd00068_c0": -1, "cpd00001_c0": -1, "cpd00090_c0": 1, "cpd00067_c0": 1, "cpd00009_c0": 1},
+    "NADH": {"cpd00004_c0": -1, "cpd00067_c0": 1, "cpd00003_c0": 1},
+    "NADPH": {"cpd00005_c0": -1, "cpd00067_c0": 1, "cpd00006_c0": 1},
+    "FADH2": {"cpd00982_c0": -1, "cpd00067_c0": 2, "cpd00015_c0": 1},
+    "FMNH2": {"cpd01270_c0": -1, "cpd00067_c0": 2, "cpd00050_c0": 1},
+    "Q8H2": {"cpd15561_c0": -1, "cpd00067_c0": 2, "cpd15560_c0": 1},
+    "MQL8": {"cpd15499_c0": -1, "cpd00067_c0": 2, "cpd15500_c0": 1},
+    "DMMQL8": {"cpd15353_c0": -1, "cpd00067_c0": 2, "cpd15352_c0": 1},
+    "ACCOA": {"cpd00022_c0": -1, "cpd00001_c0": -1, "cpd00067_c0": 1, "cpd00029_c0": 1, "cpd00010_c0": 1},
+    "GLU": {"cpd00023_c0": -1, "cpd00001_c0": -1, "cpd00024_c0": 1, "cpd00013_c0": 1, "cpd00067_c0": 2},
+    "PROTON": {"cpd00067_p0": -1, "cpd00067_c0": 1},
 }
 
 
@@ -196,7 +219,10 @@ def evidence_weights(
 def _biomass_id(model: Model) -> str:
     ids = [r.id for r in model.reactions if r.objective_coefficient != 0]
     if len(ids) != 1:
-        raise ValueError(f"Se esperaba una única reacción objetivo, hay {ids}")
+        raise ValueError(
+            f"Se esperaba una única reacción objetivo, hay {ids}; "
+            "indica la de biomasa con `biomass_rxn=`"
+        )
     return ids[0]
 
 
@@ -240,8 +266,13 @@ def globalfit(
         que salen solo alternativas minimales, de menor a mayor tamaño; la
         lista termina antes si no quedan más.
 
+    Cada candidato del MILP se verifica con LPs exactos (crecimiento >= T y
+    sin EGCs) antes de devolverlo; los que fallan por tolerancias numéricas se
+    descartan con un corte y se vuelve a resolver.
+
     Devuelve una lista de resultados, uno por solución encontrada (o uno solo
-    con el estado del solver si el problema es infactible).
+    con el estado del solver si el problema es infactible). `growth` es el
+    crecimiento verificado.
     """
     energy_rxns = _as_list(energy_rxns)
     biomass_rxn = biomass_rxn or _biomass_id(model)
@@ -367,8 +398,32 @@ def globalfit(
         out += [Removal(rxns[j].id, "backward") for t, j in enumerate(bwd) if x[o_db + t] > 0.5]
         return sorted(out, key=lambda r: (r.reaction, r.direction))
 
+    def check(removals: list[Removal]) -> tuple[float, bool]:
+        """Crecimiento y ausencia de EGCs con LPs exactos sobre el delta
+        redondeado. El MILP no basta: con delta = 1 - 1e-6 (dentro de la
+        tolerancia de integralidad) una reacción "eliminada" aún deja pasar
+        ub * 1e-6 de flujo, y en modelos grandes eso puede fingir crecimiento."""
+        with model:
+            apply_removals(model, removals)
+            egc_free = all(v == 0 for v in detect_egcs(model, energy_rxns).values())
+            if rich_medium:
+                for r in model.exchanges:
+                    r.lower_bound = min(r.lower_bound, -1000)
+            model.objective = biomass_rxn
+            growth = model.slim_optimize(error_value=0.0)
+        return growth, egc_free
+
+    def add_cut(chosen: np.ndarray, exact: bool) -> None:
+        # Sin `exact` prohíbe el conjunto y sus superconjuntos; con `exact`,
+        # solo ese conjunto (un superconjunto podría ser válido).
+        cut = np.zeros(nvar)
+        cut[o_df:] = np.where(chosen, 1.0, -1.0 if exact else 0.0)
+        rows.append(csr_matrix(cut))
+        rhs_lo.append(np.array([-np.inf])); rhs_hi.append(np.array([chosen.sum() - 1]))
+
     results = []
-    for _ in range(n_solutions):
+    rejected = 0
+    while len(results) < n_solutions:
         A = vstack(rows, format="csr")
         res = milp(
             cost,
@@ -384,20 +439,30 @@ def globalfit(
                 results.append(GlobalFitResult(status=res.message))
             break
         chosen = np.round(res.x[o_df:]).astype(bool)
+        removals = decode(res.x)
+        growth, egc_free = check(removals)
+        grows = growth >= min_growth - TOL
+
+        if not (grows and egc_free):
+            # Artefacto numérico del MILP: se descarta y se vuelve a resolver.
+            rejected += 1
+            if rejected > MAX_REJECTED:
+                results.append(GlobalFitResult(
+                    status=f"se descartaron {rejected} candidatos que no pasaron la verificación"))
+                break
+            add_cut(chosen, exact=grows)
+            continue
+
         results.append(GlobalFitResult(
             status="optimal" if res.status == 0 else res.message,
-            removals=decode(res.x),
+            removals=removals,
             objective=round(res.fun, 6),
-            growth=res.x[o_v + idx[biomass_rxn]],
+            growth=growth,
             mip_gap=getattr(res, "mip_gap", None),
         ))
         if res.status != 0 or not chosen.any():
             break
-        # Corte no-good: prohíbe repetir exactamente este conjunto.
-        cut = np.zeros(nvar)
-        cut[o_df:] = np.where(chosen, 1.0, 0.0)
-        rows.append(csr_matrix(cut))
-        rhs_lo.append(np.array([-np.inf])); rhs_hi.append(np.array([chosen.sum() - 1]))
+        add_cut(chosen, exact=False)
 
     return results
 

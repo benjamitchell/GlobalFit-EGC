@@ -4,6 +4,7 @@ from cobra.io import load_model
 
 from globalfit import (
     BIGG_DISSIPATION_REACTIONS,
+    MODELSEED_DISSIPATION_REACTIONS,
     add_dissipation_reaction,
     add_energy_dissipation_reactions,
     detect_egcs,
@@ -208,3 +209,12 @@ def test_evidence_weights(textbook):
 def test_negative_weights_are_rejected(textbook):
     with pytest.raises(ValueError, match="negativo"):
         globalfit(textbook, weights={"PGI": -1})
+
+
+def test_modelseed_dissipation_reactions_mirror_bigg():
+    # Mismas 15 EDR, con los mismos coeficientes; solo cambian los ids.
+    assert MODELSEED_DISSIPATION_REACTIONS.keys() == BIGG_DISSIPATION_REACTIONS.keys()
+    for name, bigg in BIGG_DISSIPATION_REACTIONS.items():
+        seed = MODELSEED_DISSIPATION_REACTIONS[name]
+        assert sorted(seed.values()) == sorted(bigg.values()), name
+        assert all(m.endswith(("_c0", "_p0")) for m in seed), name
