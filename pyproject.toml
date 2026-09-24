@@ -1,0 +1,25 @@
+[project]
+name = "globalfit"
+version = "0.1.0"
+description = "GlobalFit para eliminar ciclos generadores de energía (EGCs) en modelos metabólicos"
+license = { text = "MIT" }
+authors = [
+    { name = "Benjamín Mitchell García" },
+    { name = "Millaray Díaz Araujo" },
+]
+requires-python = ">=3.10"
+dependencies = ["cobra>=0.29", "scipy>=1.9", "numpy"]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+demo = ["jupyter", "matplotlib", "pandas"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["globalfit"]
