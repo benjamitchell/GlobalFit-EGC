@@ -229,8 +229,8 @@ model.
 
 ## Authors
 
-- **Benjamín Mitchell García**
-- **Millaray Díaz Araujo**
+- **Benjamín Mitchell García** ([@benjamitchell](https://github.com/benjamitchell))
+- **Millaray Díaz Araujo** ([@Millaray-DA](https://github.com/Millaray-DA))
 
 Course project for MA5405, taught by Vicente Acuña, Alejandro Maass and
 Sebastián Mendoza.
